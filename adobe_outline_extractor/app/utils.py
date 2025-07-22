@@ -248,7 +248,7 @@ def extract_text_with_formatting(page):
                         "text": line_text.strip(),
                         "font_size": max_font_size,
                         "font_flags": line_flags,
-                        "bbox": line["bbox"]  # Bounding box for position
+                        "bbox": line["bbox"]  # Bounding box of the line
                     })
     
     return text_elements

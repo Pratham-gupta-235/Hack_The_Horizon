@@ -21,17 +21,17 @@ def extract_outline(pdf_path):
         doc = fitz.open(pdf_path)
         outline = []
         title = None
-        seen_headings = set()  # To avoid duplicates
+        seen_headings = set()  
         
         # Extract document title from metadata or first page
         metadata = doc.metadata
         if metadata and metadata.get('title'):
             title = metadata['title'].strip()
         
-        # Get table of contents (outline) if available - this is usually the best source
+        # Get table of contents (outline) 
         toc = doc.get_toc(simple=False)
         
-        if toc and len(toc) > 3:  # If we have a good TOC with multiple entries
+        if toc and len(toc) > 3:  
             # Process TOC and clean it
             for level, heading_title, page_num, *_ in toc:
                 clean_title = clean_text(heading_title)
@@ -39,7 +39,7 @@ def extract_outline(pdf_path):
                     continue
                 
                 # Adjust level based on content but respect TOC hierarchy
-                adjusted_level = f"H{min(level, 4)}"  # Keep TOC levels but cap at H4
+                adjusted_level = f"H{min(level, 4)}" 
                 
                 outline.append({
                     "level": adjusted_level,
@@ -50,7 +50,7 @@ def extract_outline(pdf_path):
         else:
             # Fallback: extract headings using conservative text extraction
             # Focus on major headings only to avoid noise
-            for page_num in range(min(len(doc), 15)):  # Limit to first 15 pages for performance
+            for page_num in range(len(doc)): 
                 page = doc[page_num]
                 
                 # Extract text elements with formatting information
