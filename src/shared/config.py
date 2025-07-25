@@ -1,6 +1,8 @@
 import os
+import json
 from dataclasses import dataclass
 from typing import Optional
+from pathlib import Path
 
 @dataclass
 class OptimizedConfig:
@@ -37,3 +39,22 @@ class OptimizedConfig:
     def load_optimized(cls) -> 'OptimizedConfig':
         """Load optimized configuration based on environment."""
         return cls()
+
+
+def load_config(challenge_name: str):
+    """Load configuration for a specific challenge"""
+    
+    # Try to load from config files
+    config_dir = Path(__file__).parent.parent.parent / "config"
+    config_file = config_dir / f"{challenge_name}.json"
+    
+    if config_file.exists():
+        try:
+            with open(config_file, 'r') as f:
+                config_data = json.load(f)
+            return OptimizedConfig(**config_data)
+        except Exception as e:
+            print(f"Warning: Could not load config from {config_file}: {e}")
+    
+    # Return default config
+    return OptimizedConfig()

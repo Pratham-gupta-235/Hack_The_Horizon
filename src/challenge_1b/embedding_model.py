@@ -1,15 +1,12 @@
 import numpy as np
 from typing import List, Tuple, Dict
 from numba import jit, prange
-from sklearn_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer
 from functools import lru_cache
-from typing import List, Tuple, Dict
-import numpy as np  # Usually already present
-from numba import jit, prange          # For JIT-accelerated functions
-from shared.config import ProcessingConfig  
+from ..shared.config import OptimizedConfig  
 
 
-class OptimizedTFIDFProcessor:
+class EmbeddingModel:
     """
     Optimized TF-IDF processor with performance enhancements.
     """
