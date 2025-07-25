@@ -1,3 +1,0 @@
-PyMuPDF==1.23.21
-PyPDF2==3.0.1
-pdfplumber==0.10.3
