@@ -1,14 +1,70 @@
 {
-  "filename": "South of France - Restaurants and Hotels.pdf",
-  "total_pages": 14,
-  "outline": [],
-  "metadata": {
-    "title": "",
-    "author": "Alex Van Wagner",
-    "subject": "",
-    "creator": "Acrobat PDFMaker 21 for Word",
-    "producer": "Adobe PDF Library 21.1.174",
-    "creation_date": "D:20250421190052Z",
-    "modification_date": "D:20250421190100Z"
-  }
+  "title": "South of France - Restaurants and Hotels",
+  "outline": [
+    {
+      "level": "H1",
+      "text": "Comprehensive Guide to Restaurants and Hotels in the South of France",
+      "page": 1
+    },
+    {
+      "level": "H1",
+      "text": "Introduction",
+      "page": 1
+    },
+    {
+      "level": "H2",
+      "text": "Restaurants",
+      "page": 2
+    },
+    {
+      "level": "H2",
+      "text": "Budget-Friendly Restaurants",
+      "page": 2
+    },
+    {
+      "level": "H2",
+      "text": "Family-Friendly Restaurants",
+      "page": 3
+    },
+    {
+      "level": "H2",
+      "text": "Upscale Restaurants",
+      "page": 4
+    },
+    {
+      "level": "H2",
+      "text": "Luxurious Restaurants",
+      "page": 6
+    },
+    {
+      "level": "H2",
+      "text": "Hotels",
+      "page": 8
+    },
+    {
+      "level": "H2",
+      "text": "Budget-Friendly Hotels",
+      "page": 8
+    },
+    {
+      "level": "H2",
+      "text": "Family-Friendly Hotels",
+      "page": 9
+    },
+    {
+      "level": "H2",
+      "text": "Upscale Hotels",
+      "page": 11
+    },
+    {
+      "level": "H2",
+      "text": "Luxurious Hotels",
+      "page": 12
+    },
+    {
+      "level": "H2",
+      "text": "Conclusion",
+      "page": 14
+    }
+  ]
 }
