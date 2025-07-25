@@ -1,201 +1,120 @@
-"""
-Lightweight embedding model for semantic similarity.
-"""
-
-import logging
 import numpy as np
-from typing import List, Dict, Any
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-import pickle
-import os
-from pathlib import Path
+from typing import List, Tuple, Dict
+from numba import jit, prange
+from sklearn_extraction.text import TfidfVectorizer
+from functools import lru_cache
+from typing import List, Tuple, Dict
+import numpy as np  # Usually already present
+from numba import jit, prange          # For JIT-accelerated functions
+from shared.config import ProcessingConfig  
 
-logger = logging.getLogger(__name__)
 
+class OptimizedTFIDFProcessor:
+    """
+    Optimized TF-IDF processor with performance enhancements.
+    """
 
-class EmbeddingModel:
-    """Lightweight embedding model using TF-IDF for semantic similarity."""
-    
-    def __init__(self, model_cache_dir: str = "/app/models"):
-        self.model_cache_dir = Path(model_cache_dir)
-        self.model_cache_dir.mkdir(parents=True, exist_ok=True)
-        
-        # TF-IDF parameters optimized for efficiency and quality
+    def __init__(
+        self,
+        max_features: int = 10000,
+        use_idf: bool = True,
+        ngram_range: Tuple[int, int] = (1, 2),
+        max_df: float = 0.85,
+        min_df: int = 2
+    ):
+        # Configure TF-IDF vectorizer for speed and quality
         self.vectorizer = TfidfVectorizer(
-            max_features=5000,  # Limit vocabulary size for efficiency
-            ngram_range=(1, 2),  # Unigrams and bigrams
-            stop_words='english',
-            min_df=1,
-            max_df=0.95,
-            sublinear_tf=True,  # Apply sublinear TF scaling
-            norm='l2'
+            max_features=max_features,
+            use_idf=use_idf,
+            stop_words="english",
+            ngram_range=ngram_range,
+            max_df=max_df,
+            min_df=min_df,
+            lowercase=True,
+            strip_accents="unicode",
+            norm="l2",
+            smooth_idf=True,
+            sublinear_tf=True
         )
-        
-        self.is_fitted = False
-        self.vocabulary_cache_file = self.model_cache_dir / "tfidf_vocabulary.pkl"
-        
-        # Try to load pre-trained vocabulary if available
-        self._load_cached_model()
-    
-    def _load_cached_model(self):
-        """Load cached TF-IDF model if available."""
-        try:
-            if self.vocabulary_cache_file.exists():
-                with open(self.vocabulary_cache_file, 'rb') as f:
-                    cached_data = pickle.load(f)
-                    
-                self.vectorizer.vocabulary_ = cached_data['vocabulary']
-                self.vectorizer.idf_ = cached_data['idf']
-                self.is_fitted = True
-                logger.info("Loaded cached TF-IDF model")
-        except Exception as e:
-            logger.warning(f"Could not load cached model: {str(e)}")
-    
-    def _save_model_cache(self):
-        """Save TF-IDF model to cache."""
-        try:
-            cache_data = {
-                'vocabulary': self.vectorizer.vocabulary_,
-                'idf': self.vectorizer.idf_
-            }
-            
-            with open(self.vocabulary_cache_file, 'wb') as f:
-                pickle.dump(cache_data, f)
-                
-            logger.info("Saved TF-IDF model to cache")
-        except Exception as e:
-            logger.warning(f"Could not save model cache: {str(e)}")
-    
-    def fit_documents(self, documents: List[str]):
-        """Fit the TF-IDF model on document corpus."""
-        if not documents:
-            logger.warning("No documents provided for fitting")
-            return
-        
-        try:
-            logger.info(f"Fitting TF-IDF model on {len(documents)} documents")
-            self.vectorizer.fit(documents)
-            self.is_fitted = True
-            
-            # Cache the model
-            self._save_model_cache()
-            
-        except Exception as e:
-            logger.error(f"Error fitting TF-IDF model: {str(e)}")
-            raise
-    
-    def encode_texts(self, texts: List[str]) -> np.ndarray:
+
+    @jit(nopython=True)
+    def _fast_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
         """
-        Encode texts into embeddings.
-        
+        Compute cosine similarity between two vectors using JIT for speed.
+        """
+        dot = 0.0
+        norm_a = 0.0
+        norm_b = 0.0
+        for i in prange(a.shape[0]):
+            dot += a[i] * b[i]
+            norm_a += a[i] ** 2
+            norm_b += b[i] ** 2
+        if norm_a > 0 and norm_b > 0:
+            return dot / (np.sqrt(norm_a) * np.sqrt(norm_b))
+        return 0.0
+
+    @lru_cache(maxsize=128)
+    def _cached_feature_names(self) -> Tuple[str, ...]:
+        """
+        Cache feature names to avoid repeated calls to vectorizer.
+        """
+        return tuple(self.vectorizer.get_feature_names_out())
+
+    def fit_transform_optimized(self, documents: List[str]) -> Tuple[np.ndarray, List[str]]:
+        """
+        Fit the TF-IDF vectorizer on the documents and transform into a dense matrix.
+
         Args:
-            texts: List of text strings to encode
-            
+            documents: List of raw text documents.
+
         Returns:
-            Matrix of text embeddings
+            tfidf_matrix: 2D numpy array of TF-IDF features.
+            feature_names: List of feature names.
         """
-        if not texts:
-            return np.array([])
-        
-        if not self.is_fitted:
-            # If not fitted, fit on the input texts
-            self.fit_documents(texts)
-        
-        try:
-            embeddings = self.vectorizer.transform(texts)
-            return embeddings.toarray()
-        except Exception as e:
-            logger.error(f"Error encoding texts: {str(e)}")
-            # Fallback: refit and try again
-            self.fit_documents(texts)
-            embeddings = self.vectorizer.transform(texts)
-            return embeddings.toarray()
-    
-    def compute_similarity(self, text1: str, text2: str) -> float:
+        # Batch processing for large corpora
+        batch_size = 1000
+        if len(documents) > batch_size:
+            from scipy.sparse import vstack
+            partial_matrices = []
+            for i in range(0, len(documents), batch_size):
+                batch = documents[i : i + batch_size]
+                if i == 0:
+                    partial = self.vectorizer.fit_transform(batch)
+                else:
+                    partial = self.vectorizer.transform(batch)
+                partial_matrices.append(partial)
+            sparse_matrix = vstack(partial_matrices)
+        else:
+            sparse_matrix = self.vectorizer.fit_transform(documents)
+
+        dense_matrix = sparse_matrix.toarray()
+        features = list(self._cached_feature_names())
+        return dense_matrix, features
+
+    def compute_similarities(
+        self,
+        tfidf_matrix: np.ndarray,
+        ids: List[str]
+    ) -> List[Dict[str, float]]:
         """
-        Compute cosine similarity between two texts.
-        
+        Compute pairwise cosine similarities between each document vector.
+
         Args:
-            text1: First text
-            text2: Second text
-            
+            tfidf_matrix: 2D array where each row is a TF-IDF vector.
+            ids: List of document identifiers.
+
         Returns:
-            Cosine similarity score (0-1)
+            List of dicts mapping document_id -> similarity score.
         """
-        try:
-            embeddings = self.encode_texts([text1, text2])
-            if embeddings.shape[0] < 2:
-                return 0.0
-            
-            similarity = cosine_similarity([embeddings[0]], [embeddings[1]])[0][0]
-            return max(0.0, min(1.0, similarity))  # Clamp to [0, 1]
-            
-        except Exception as e:
-            logger.warning(f"Error computing similarity: {str(e)}")
-            return 0.0
-    
-    def compute_similarities(self, query_text: str, candidate_texts: List[str]) -> List[float]:
-        """
-        Compute similarities between query and multiple candidates.
-        
-        Args:
-            query_text: Query text
-            candidate_texts: List of candidate texts
-            
-        Returns:
-            List of similarity scores
-        """
-        if not candidate_texts:
-            return []
-        
-        try:
-            all_texts = [query_text] + candidate_texts
-            embeddings = self.encode_texts(all_texts)
-            
-            if embeddings.shape[0] < 2:
-                return [0.0] * len(candidate_texts)
-            
-            query_embedding = embeddings[0:1]
-            candidate_embeddings = embeddings[1:]
-            
-            similarities = cosine_similarity(query_embedding, candidate_embeddings)[0]
-            
-            # Clamp similarities to [0, 1]
-            similarities = np.clip(similarities, 0.0, 1.0)
-            
-            return similarities.tolist()
-            
-        except Exception as e:
-            logger.warning(f"Error computing batch similarities: {str(e)}")
-            return [0.0] * len(candidate_texts)
-    
-    def get_top_matches(self, query_text: str, candidate_texts: List[str], 
-                       top_k: int = 10) -> List[Dict[str, Any]]:
-        """
-        Get top-k most similar texts to query.
-        
-        Args:
-            query_text: Query text
-            candidate_texts: List of candidate texts
-            top_k: Number of top matches to return
-            
-        Returns:
-            List of matches with indices and scores
-        """
-        similarities = self.compute_similarities(query_text, candidate_texts)
-        
-        # Create list of (index, score, text) tuples
-        matches = [
-            {
-                'index': i,
-                'score': score,
-                'text': candidate_texts[i]
-            }
-            for i, score in enumerate(similarities)
-        ]
-        
-        # Sort by score in descending order
-        matches.sort(key=lambda x: x['score'], reverse=True)
-        
-        return matches[:top_k]
+        results = []
+        n = tfidf_matrix.shape[0]
+        for i in range(n):
+            row = tfidf_matrix[i]
+            sims = {}
+            for j in range(n):
+                if i == j:
+                    continue
+                sims[ids[j]] = float(self._fast_similarity(row, tfidf_matrix[j]))
+            # Keep top-n if desired, or return full dict
+            results.append({"id": ids[i], "similarities": sims})
+        return results

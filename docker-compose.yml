@@ -1,20 +1,49 @@
 version: '3.8'
 
 services:
-  adobe-combined:
-    build: .
-    container_name: adobe-combined-solution
+  adobe-hackathon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: adobe-hackathon-app
+    ports:
+      - "8000:8000"
     volumes:
-      - ./input:/app/input
+      - ./input:/app/input:ro
       - ./output:/app/output
       - ./cache:/app/cache
+      - ./logs:/app/logs
     environment:
-      - MODE=both  # Options: 1a, 1b, both
-      - PERSONA=Assistant Professor
-      - JOB=Research paper analysis and teaching resource identification
-    platform: linux/amd64
+      - MODE=both
+      - WORKERS=4
+      - CACHE_TTL=3600
+      - MAX_MEMORY_MB=4096
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     deploy:
       resources:
         limits:
-          cpus: '8'
-          memory: 16G
+          cpus: '4.0'
+          memory: 4G
+        reservations:
+          cpus: '2.0'  
+          memory: 2G
+
+  # Redis for enhanced caching (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: adobe-hackathon-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+
+volumes:
+  redis_data:

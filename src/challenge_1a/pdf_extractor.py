@@ -1,386 +1,336 @@
-import os
-import json
-import re
-import fitz
+
+# OPTIMIZED PDF PROCESSOR WITH PERFORMANCE ENHANCEMENTS
+# File: optimized_pdf_processor.py
+
+import fitz  # PyMuPDF
+import numpy as np
+from numba import jit, prange
+from typing import Dict, List, Optional, Tuple, Any
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from functools import lru_cache
+import cachetools
+import gc
 import logging
-from typing import Dict, List, Any, Optional
+from contextlib import contextmanager
+import mmap
+import os
+from dataclasses import dataclass
 from pathlib import Path
+from src.challenge_1a.cache_manager import TTLCacheManager
+from shared.config import ProcessingConfig
+from shared.utils import check_memory_usage, setup_logging  
+from challenge_1a.cache_manager import TTLCacheManager
 
-from .config import ExtractorConfig
-from .text_processor import TextProcessor
-from .heading_classifier import HeadingClassifier
-from .outline_hierarchy import OutlineHierarchy
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+cache = TTLCacheManager(maxsize=1000, ttl=3600)
+cache_key = f"outline_{pdf_path}_{options_hash}"
+result = cache.get(cache_key)
+if result is None:
+    result = expensive_processing_function(pdf_path)
+    cache.set(cache_key, result)
 
-class PDFProcessingError(Exception):
-    """Custom exception for PDF processing errors"""
-    pass
 
-class PDFOutlineExtractor:
-    """Main PDF outline extraction class with improved algorithms"""
-    
-    def __init__(self, config: Optional[ExtractorConfig] = None):
-        self.config = config or ExtractorConfig()
-        self.text_processor = TextProcessor(self.config)
-        self.heading_classifier = HeadingClassifier(self.config)
-        self.hierarchy_builder = OutlineHierarchy(self.config)
-        
-    def extract_outline(self, pdf_path: str) -> Dict[str, Any]:
-        """Main extraction method with improved error handling and caching"""
-        import time
-        start_time = time.time()
-        
-        pdf_path = str(Path(pdf_path).resolve())
-        
+@dataclass
+class ProcessingConfig:
+    """Configuration class for PDF processing settings."""
+    max_workers: int = 4
+    chunk_size: int = 10
+    cache_ttl: int = 3600
+    cache_size: int = 1000
+    memory_threshold: float = 0.8  # 80% memory usage threshold
+
+class OptimizedPDFProcessor:
+    """High-performance PDF processor with memory and speed optimizations."""
+
+    def __init__(self, config: ProcessingConfig):
+        self.config = config
+        self.cache = cachetools.TTLCache(
+            maxsize=config.cache_size, 
+            ttl=config.cache_ttl
+        )
+        self.logger = self._setup_logging()
+
+    def _setup_logging(self) -> logging.Logger:
+        """Setup optimized logging configuration."""
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.INFO)
+
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+
+        return logger
+
+    @contextmanager
+    def managed_pdf_file(self, pdf_path: str):
+        """Context manager for proper PDF file resource management."""
+        pdf_doc = None
         try:
-            with fitz.open(pdf_path) as doc:
-                # Try TOC first (faster and often more accurate)
-                toc_start = time.time()
-                outline = self._extract_from_toc(doc)
-                toc_time = time.time() - toc_start
-                
-                # If TOC is insufficient, fallback to text analysis
-                text_analysis_time = 0
-                if not self._is_outline_sufficient(outline):
-                    print(f"   🔍 TOC insufficient, analyzing text...")
-                    text_start = time.time()
-                    outline = self._extract_from_text(doc)
-                    text_analysis_time = time.time() - text_start
-                
-                # Build hierarchical structure
-                hierarchy_start = time.time()
-                if outline:
-                    hierarchical_outline = self.hierarchy_builder.build_hierarchy(outline)
-                    outline = self.hierarchy_builder.flatten_hierarchy(hierarchical_outline)
-                hierarchy_time = time.time() - hierarchy_start
-                
-                result = self._finalize_outline(outline, doc, pdf_path)
-                
-                return result
-                
-        except Exception as e:
-            logger.error(f"Failed to extract outline from {pdf_path}: {e}")
-            error_time = time.time() - start_time
-            return self._create_error_response(pdf_path, e, error_time)
-    
-    def _extract_from_toc(self, doc) -> List[Dict[str, Any]]:
-        """Extract outline from PDF's table of contents"""
+            # Use memory mapping for large files
+            if os.path.getsize(pdf_path) > 100 * 1024 * 1024:  # > 100MB
+                with open(pdf_path, 'rb') as f:
+                    with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mmapped_file:
+                        pdf_doc = fitz.open(stream=mmapped_file, filetype="pdf")
+                        yield pdf_doc
+            else:
+                pdf_doc = fitz.open(pdf_path)
+                yield pdf_doc
+        finally:
+            if pdf_doc:
+                pdf_doc.close()
+            gc.collect()  # Force garbage collection
+
+    @lru_cache(maxsize=128)
+    def _get_cached_page_text(self, page_hash: str, page_num: int) -> str:
+        """Cache extracted text using page hash for deduplication."""
+        return self._extract_page_text_optimized(page_num)
+
+    @jit(nopython=True)
+    def _process_text_array(self, text_array: np.ndarray) -> np.ndarray:
+        """JIT-compiled text processing for numerical operations."""
+        result = np.zeros_like(text_array)
+        for i in prange(len(text_array)):
+            # Example: character frequency analysis
+            result[i] = len(set(text_array[i])) if text_array[i] else 0
+        return result
+
+    def extract_text_optimized(self, pdf_path: str) -> Dict[str, Any]:
+        """
+        Optimized text extraction with memory management and caching.
+
+        Args:
+            pdf_path: Path to PDF file
+
+        Returns:
+            Dictionary containing extracted text and metadata
+        """
+        cache_key = f"text_extract_{Path(pdf_path).stat().st_mtime}_{pdf_path}"
+
+        # Check cache first
+        if cache_key in self.cache:
+            self.logger.info(f"Cache hit for {pdf_path}")
+            return self.cache[cache_key]
+
+        result = {
+            "pages": [],
+            "metadata": {},
+            "processing_time": 0,
+            "memory_usage": 0
+        }
+
         try:
-            toc = doc.get_toc(simple=False)
-            if not toc:
-                return []
-            
-            outline = []
-            seen_headings = set()
-            
-            for level, heading_title, page_num, *_ in toc:
-                clean_title = self.text_processor.clean_text_optimized(heading_title)
-                if not clean_title or clean_title in seen_headings:
-                    continue
-                
-                # More permissive for TOC entries
-                adjusted_level = f"H{min(level, self.config.max_outline_depth)}"
-                outline.append({
-                    "level": adjusted_level,
-                    "text": clean_title,
-                    "page": max(1, page_num),
-                    "confidence": 0.9,  # High confidence for TOC
-                    "source": "toc"
-                })
-                seen_headings.add(clean_title)
-            
-            return outline
-            
-        except Exception as e:
-            logger.warning(f"TOC extraction failed: {e}")
-            return []
-    
-    def _extract_from_text(self, doc) -> List[Dict[str, Any]]:
-        """Extract outline from text analysis - generic approach for any PDF"""
-        outline = []
-        seen_headings = set()
-        
-        for page_num in range(len(doc)):
-            try:
-                page = doc[page_num]
-                text_elements = self.text_processor.extract_text_with_formatting_optimized(page)
-                
-                for element in text_elements:
-                    clean_title = self.text_processor.clean_text_optimized(element.text)
-                    if not clean_title or clean_title in seen_headings:
-                        continue
-                    
-                    # Generic heading detection based on formatting
-                    if self._is_likely_heading_generic(clean_title, element.font_size, element.font_flags, element.y_pos):
-                        level = self._determine_heading_level_generic(clean_title, element.font_size, element.font_flags)
-                        
-                        outline.append({
-                            "level": level,
-                            "text": clean_title,
-                            "page": page_num + 1,
-                            "confidence": 0.8,
-                            "source": "text_analysis",
-                            "font_size": element.font_size
+            with self.managed_pdf_file(pdf_path) as pdf_doc:
+                total_pages = pdf_doc.page_count
+
+                # Process in chunks to manage memory
+                for chunk_start in range(0, total_pages, self.config.chunk_size):
+                    chunk_end = min(chunk_start + self.config.chunk_size, total_pages)
+                    chunk_texts = []
+
+                    for page_num in range(chunk_start, chunk_end):
+                        page = pdf_doc[page_num]
+
+                        # Optimized text extraction
+                        text_dict = page.get_text("dict")
+                        text = self._extract_structured_text(text_dict)
+
+                        chunk_texts.append({
+                            "page_number": page_num + 1,
+                            "text": text,
+                            "char_count": len(text)
                         })
-                        seen_headings.add(clean_title)
-                            
-            except Exception as e:
-                logger.warning(f"Error processing page {page_num + 1}: {e}")
-                continue
-        
-        return outline
-    
-    def _is_likely_heading_generic(self, text: str, font_size: float, font_flags: int, y_pos: float) -> bool:
-        """Generic heading detection optimized for hackathon requirements"""
-        text_lower = text.lower().strip()
-        
-        # Skip very long text (likely paragraphs)
-        if len(text) > 100:
-            return False
-        
-        # Skip very short text or fragments - be more strict for quality
-        if len(text.strip()) < 10:
-            return False
-        
-        # Skip dates explicitly (common issue in your output)
-        date_patterns = [
-            r'\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+\d{4}\b',
-            r'\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b',
-            r'\b\d{4}\b'  # Just years
-        ]
-        
-        for pattern in date_patterns:
-            if re.search(pattern, text_lower):
-                return False
-        
-        # Skip incomplete sentences and fragments
-        if (not text[0].isupper() and not re.match(r'^\d+\.', text)) or text.endswith(('to', 'for', 'and', 'of', 'the', 'in', 'on', 'at')):
-            return False
-        
-        # Skip common non-heading patterns
-        exclude_patterns = [
-            r'^\d+$',  # Just numbers
-            r'^page \d+',  # Page numbers
-            r'^[a-z\s]+@[a-z\s]+\.(com|org|edu)',  # Emails
-            r'^www\.|^http',  # URLs
-            r'^\s*[\.\_\-]{3,}\s*$',  # Lines/separators
-            r'^[a-z]{1,3}$',  # Very short words
-            r'percent|%|\$|funding|expenditure|contribution'  # Financial terms that aren't headings
-        ]
-        
-        for pattern in exclude_patterns:
-            if re.search(pattern, text_lower):
-                return False
-        
-        # Strong heading indicators (high confidence)
-        strong_indicators = [
-            r'^\d+\.\s+[A-Z]',  # "1. Preamble", "2. Terms", etc.
-            r'^\d+\.\d+\s+[A-Z]',  # "1.1 Schools", "2.3 Universities", etc.
-            r'^appendix\s+[a-z]:', # "Appendix A:", "Appendix B:"
-            r'\b(introduction|summary|conclusion|references|bibliography|acknowledgements|abstract|overview|background)\b',
-            r'\b(table of contents|revision history|terms of reference|membership|preamble)\b'
-        ]
-        
-        for pattern in strong_indicators:
-            if re.search(pattern, text_lower):
-                return True
-        
-        # Font-based detection with adaptive thresholds
-        is_bold = bool(font_flags & 16)
-        word_count = len(text.split())
-        
-        # Adaptive font size thresholds (works for documents with smaller fonts)
-        if is_bold and font_size >= 10:  # Lowered from 14
-            if 2 <= word_count <= 10:
-                return True
-        elif font_size >= 12:  # Lowered from 16
-            if 2 <= word_count <= 10:
-                return True
-        elif font_size >= 11 and word_count >= 3:  # Additional check for medium fonts
-            # Check if it's ALL CAPS (often indicates heading)
-            if text.isupper() and 3 <= len(text) <= 50:
-                return True
-            # Check if it starts with capital and has no period at end (title-like)
-            if text[0].isupper() and not text.endswith('.') and word_count <= 8:
-                return True
-        
-        return False
-    
-    def _determine_heading_level_generic(self, text: str, font_size: float, font_flags: int) -> str:
-        """Determine heading level based on content and formatting"""
-        text_lower = text.lower().strip()
-        is_bold = bool(font_flags & 16)
-        
-        # H1: Major sections and main numbered items
-        h1_patterns = [
-            r'^\d+\.(?!\d)',  # 1., 2., 3., etc.
-            r'\b(chapter|part|section)\s+\d+',
-            r'\b(introduction|summary|conclusion|references|bibliography|abstract)\b',
-            r'\b(appendix|annex)\b',
-            r'\b(table of contents|revision history)\b'
-        ]
-        
-        for pattern in h1_patterns:
-            if re.search(pattern, text_lower):
-                return "H1"
-        
-        # H2: Subsections
-        h2_patterns = [
-            r'^\d+\.\d+(?!\d)',  # 1.1, 2.3, etc.
-            r'^[a-z]\.',  # a., b., c., etc.
-        ]
-        
-        for pattern in h2_patterns:
-            if re.search(pattern, text_lower):
-                return "H2"
-        
-        # H3: Sub-subsections
-        h3_patterns = [
-            r'^\d+\.\d+\.\d+',  # 1.1.1, 2.3.4, etc.
-            r'^[a-z]\)',  # a), b), c), etc.
-            r'^[ivx]+\.',  # i., ii., iii., etc.
-        ]
-        
-        for pattern in h3_patterns:
-            if re.search(pattern, text_lower):
-                return "H3"
-        
-        # Font size based determination (adjusted for smaller fonts)
-        if font_size >= 16 or (font_size >= 14 and is_bold):
-            return "H1"
-        elif font_size >= 12 or (font_size >= 11 and is_bold):
-            return "H2"
-        elif font_size >= 10:
-            return "H3"
-        else:
-            return "H4"
-    
-    def _should_include_heading(self, text: str, font_size: float, font_flags: int) -> bool:
-        """Enhanced filtering for text-extracted headings"""
-        text_lower = text.lower()
-        
-        # Always include numbered sections and appendices
-        if text.startswith(tuple(f'{i}.' for i in range(1, 10))) or 'appendix' in text_lower:
-            return True
-        
-        # Always include major document sections
-        major_sections = {
-            'summary', 'background', 'introduction', 'overview', 'conclusion',
-            'references', 'acknowledgements', 'table of contents', 'revision history',
-            'approach', 'evaluation', 'milestones', 'business plan', 'abstract'
-        }
-        
-        if any(section in text_lower for section in major_sections):
-            return True
-        
-        # Include if formatting suggests heading
-        if font_size >= self.config.font_size_h2_threshold and (font_flags & 16):
-            return True
-        
-        # Exclude specific unwanted patterns
-        exclude_patterns = [
-            'for each ontario', 'timeline:', 'funding:', 'result:', 'phase i:',
-            'phase ii:', 'phase iii:', 'march 2003', 'april 2003', 'january 2007'
-        ]
-        
-        return not any(pattern in text_lower for pattern in exclude_patterns)
-    
-    def _is_outline_sufficient(self, outline: List[Dict]) -> bool:
-        """Check if extracted outline is sufficient - more permissive for expected output"""
-        if not outline:
-            return False
-        
-        # Be more permissive - even small outlines might be correct
-        return len(outline) >= 1
-    
-    def _finalize_outline(self, outline: List[Dict], doc, pdf_path: str) -> Dict[str, Any]:
-        """Finalize outline with exact required format"""
-        # Extract title
-        title = self._extract_title(outline, doc, pdf_path)
-        
-        # Process and clean outline to exact format
-        processed_outline = []
-        for item in outline:
-            processed_outline.append({
-                "level": item["level"],
-                "text": item["text"].strip(),
-                "page": item["page"]
-            })
-        
-        # Sort by page and level for logical order
-        processed_outline.sort(key=lambda x: (x["page"], int(x["level"][1:])))
-        
-        return {
-            "title": title,
-            "outline": processed_outline
-        }
-    
-    def _extract_title(self, outline: List[Dict], doc, pdf_path: str) -> str:
-        """Extract document title from various sources - works for any PDF"""
-        # Try metadata first
-        metadata = doc.metadata
-        if metadata and metadata.get('title'):
-            title = metadata['title'].strip()
-            if title and len(title) > 3 and not title.startswith('Microsoft Word'):
-                return title
-        
-        # Try to extract title from first page content
-        try:
-            first_page = doc[0]
-            text_elements = self.text_processor.extract_text_with_formatting_optimized(first_page)
-            
-            # Look for large, bold text near the top of the page
-            for element in text_elements[:15]:  # Check first 15 elements
-                if (element.font_size >= 14 and 
-                    element.font_flags & 16 and  # Bold
-                    element.y_pos < 300 and  # Near top (increased range)
-                    len(element.text.strip()) > 5):
-                    clean_title = self.text_processor.clean_text_optimized(element.text)
-                    if clean_title and not clean_title.lower().startswith(('page', 'table of', 'revision', 'version')):
-                        return clean_title
-        except Exception:
-            pass
-        
-        # Try first heading if high confidence
-        if outline:
-            first_heading = outline[0]
-            if (first_heading.get('page', 1) == 1 and 
-                first_heading.get('confidence', 0) >= 0.8):
-                return first_heading['text']
-        
-        # Enhanced fallback - try to extract meaningful title from filename
-        filename = Path(pdf_path).stem
-        
-        # Clean up common filename patterns
-        title = filename.replace('_', ' ').replace('-', ' ').replace('.', ' ')
-        
-        # Remove file extensions that might be in the name
-        title = re.sub(r'\b(pdf|doc|docx|txt)\b', '', title, flags=re.IGNORECASE)
-        
-        # Remove common prefixes/suffixes
-        title = re.sub(r'\b(file\d+|document|draft|final|v\d+|version\d+)\b', '', title, flags=re.IGNORECASE)
-        
-        # Clean extra spaces and title case
-        title = ' '.join(title.split()).strip()
-        
-        if len(title) > 3:
-            return title.title()
-        else:
-            return "Untitled Document"
-    
-    def _create_error_response(self, pdf_path: str, error: Exception, processing_time: float = 0) -> Dict[str, Any]:
-        """Create error response"""
-        return {
-            "title": Path(pdf_path).stem.replace('_', ' ').replace('-', ' ').title(),
-            "outline": [],
-            "error": str(error),
-            "metadata": {
-                "total_pages": 0,
-                "extraction_method": "error",
-                "total_headings": 0,
-                "avg_confidence": 0.0
+
+                        # Clear page cache periodically
+                        if page_num % 100 == 0:
+                            page.get_textpage().clear()
+
+                    result["pages"].extend(chunk_texts)
+
+                    # Memory management
+                    if self._check_memory_usage() > self.config.memory_threshold:
+                        gc.collect()
+
+                result["metadata"] = {
+                    "total_pages": total_pages,
+                    "total_chars": sum(p["char_count"] for p in result["pages"])
+                }
+
+        except Exception as e:
+            self.logger.error(f"Error processing {pdf_path}: {str(e)}")
+            raise
+
+        # Cache the result
+        self.cache[cache_key] = result
+        return result
+
+    def _extract_structured_text(self, text_dict: Dict) -> str:
+        """Extract and structure text from PyMuPDF text dictionary."""
+        text_lines = []
+
+        for block in text_dict.get("blocks", []):
+            if "lines" in block:
+                for line in block["lines"]:
+                    line_text = ""
+                    for span in line.get("spans", []):
+                        line_text += span.get("text", "")
+                    if line_text.strip():
+                        text_lines.append(line_text.strip())
+
+        return "\n".join(text_lines)
+
+    def _check_memory_usage(self) -> float:
+        """Check current memory usage percentage."""
+        import psutil
+        return psutil.virtual_memory().percent / 100.0
+
+    def process_multiple_pdfs(self, pdf_paths: List[str]) -> List[Dict[str, Any]]:
+        """
+        Process multiple PDFs in parallel with optimized resource management.
+
+        Args:
+            pdf_paths: List of PDF file paths
+
+        Returns:
+            List of processing results
+        """
+        results = []
+
+        with ProcessPoolExecutor(max_workers=self.config.max_workers) as executor:
+            # Submit all tasks
+            future_to_path = {
+                executor.submit(self.extract_text_optimized, path): path 
+                for path in pdf_paths
             }
-        }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_path):
+                path = future_to_path[future]
+                try:
+                    result = future.result()
+                    result["file_path"] = path
+                    results.append(result)
+                    self.logger.info(f"Completed processing: {path}")
+                except Exception as e:
+                    self.logger.error(f"Error processing {path}: {str(e)}")
+                    results.append({
+                        "file_path": path,
+                        "error": str(e),
+                        "pages": [],
+                        "metadata": {}
+                    })
+
+        return results
+
+# OPTIMIZED TF-IDF PROCESSOR
+class OptimizedTFIDFProcessor:
+    """Optimized TF-IDF processor with performance enhancements."""
+
+    def __init__(self, max_features: int = 10000, use_idf: bool = True):
+        from sklearn.feature_extraction.text import TfidfVectorizer
+
+        self.vectorizer = TfidfVectorizer(
+            max_features=max_features,
+            use_idf=use_idf,
+            stop_words='english',
+            ngram_range=(1, 2),
+            max_df=0.85,
+            min_df=2,
+            lowercase=True,
+            strip_accents='unicode',
+            norm='l2',
+            smooth_idf=True,
+            sublinear_tf=True  # Use log scaling
+        )
+
+    @jit(nopython=True)
+    def _fast_similarity_computation(self, matrix1: np.ndarray, matrix2: np.ndarray) -> np.ndarray:
+        """JIT-compiled similarity computation."""
+        result = np.zeros((matrix1.shape[0], matrix2.shape[0]))
+        for i in prange(matrix1.shape[0]):
+            for j in prange(matrix2.shape[0]):
+                dot_product = 0.0
+                norm1 = 0.0
+                norm2 = 0.0
+                for k in range(matrix1.shape[1]):
+                    dot_product += matrix1[i, k] * matrix2[j, k]
+                    norm1 += matrix1[i, k] ** 2
+                    norm2 += matrix2[j, k] ** 2
+
+                if norm1 > 0 and norm2 > 0:
+                    result[i, j] = dot_product / (np.sqrt(norm1) * np.sqrt(norm2))
+
+        return result
+
+    def fit_transform_optimized(self, documents: List[str]) -> Tuple[np.ndarray, List[str]]:
+        """
+        Optimized TF-IDF fitting and transformation.
+
+        Args:
+            documents: List of text documents
+
+        Returns:
+            Tuple of (TF-IDF matrix, feature names)
+        """
+        # Batch processing for large document collections
+        batch_size = 1000
+
+        if len(documents) > batch_size:
+            # Process in batches
+            tfidf_matrices = []
+
+            for i in range(0, len(documents), batch_size):
+                batch = documents[i:i + batch_size]
+                if i == 0:
+                    # Fit on first batch
+                    batch_matrix = self.vectorizer.fit_transform(batch)
+                else:
+                    # Transform subsequent batches
+                    batch_matrix = self.vectorizer.transform(batch)
+
+                tfidf_matrices.append(batch_matrix)
+
+            # Combine matrices
+            from scipy.sparse import vstack
+            tfidf_matrix = vstack(tfidf_matrices)
+        else:
+            tfidf_matrix = self.vectorizer.fit_transform(documents)
+
+        feature_names = self.vectorizer.get_feature_names_out().tolist()
+
+        return tfidf_matrix.toarray(), feature_names
+
+# USAGE EXAMPLE
+if __name__ == "__main__":
+    # Configuration
+    config = ProcessingConfig(
+        max_workers=4,
+        chunk_size=10,
+        cache_ttl=3600,
+        cache_size=1000
+    )
+
+    # Initialize processors
+    pdf_processor = OptimizedPDFProcessor(config)
+    tfidf_processor = OptimizedTFIDFProcessor()
+
+    # Example usage
+    pdf_files = ["document1.pdf", "document2.pdf"]
+
+    # Process PDFs
+    results = pdf_processor.process_multiple_pdfs(pdf_files)
+
+    # Extract all text for TF-IDF
+    all_texts = []
+    for result in results:
+        document_text = " ".join([page["text"] for page in result["pages"]])
+        all_texts.append(document_text)
+
+    # Apply TF-IDF
+    if all_texts:
+        tfidf_matrix, features = tfidf_processor.fit_transform_optimized(all_texts)
+        print(f"TF-IDF matrix shape: {tfidf_matrix.shape}")
+        print(f"Number of features: {len(features)}")
