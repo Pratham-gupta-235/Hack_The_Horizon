@@ -31,7 +31,7 @@ class PersonaDrivenProcessor:
         self.pdf_processor = PDFProcessor()
         self.text_processor = TextProcessor()
         self.embedding_model = EmbeddingModel()
-        self.relevance_scorer = RelevanceScorer(self.embedding_model)
+        self.relevance_scorer = RelevanceScorer(max_features=10000)
         self.output_formatter = OutputFormatter()
     
     def process_single_pdf(self, pdf_file: Path, output_dir: str) -> Tuple[str, float, bool]:
@@ -126,9 +126,24 @@ class PersonaDrivenProcessor:
         if all_processed_docs:
             logger.info(f"🎯 Creating consolidated analysis for {len(all_processed_docs)} documents")
             
+            # Extract text content from processed documents for scoring
+            doc_texts = []
+            doc_ids = []
+            for doc in all_processed_docs:
+                # Combine all section content into one text
+                full_text = ' '.join([
+                    section.get('cleaned_content', '') 
+                    for section in doc.get('processed_sections', [])
+                ])
+                doc_texts.append(full_text)
+                doc_ids.append(doc.get('filename', 'unknown'))
+            
+            # Create persona query
+            persona_query = f"As a {self.persona}, I need to {self.job}"
+            
             # Score relevance across all documents
             all_scored_sections = self.relevance_scorer.score_documents(
-                all_processed_docs, self.persona, self.job
+                doc_texts, doc_ids, persona_query
             )
             
             # Create consolidated output

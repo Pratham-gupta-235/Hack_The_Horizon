@@ -16,8 +16,8 @@ class EmbeddingModel:
         max_features: int = 10000,
         use_idf: bool = True,
         ngram_range: Tuple[int, int] = (1, 2),
-        max_df: float = 0.85,
-        min_df: int = 2
+        max_df: float = 0.95,  # Increased from 0.85
+        min_df: int = 1        # Decreased from 2
     ):
         # Configure TF-IDF vectorizer for speed and quality
         self.vectorizer = TfidfVectorizer(
