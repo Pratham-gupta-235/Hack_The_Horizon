@@ -1,6 +1,3 @@
-# OPTIMIZED DOCKERFILE FOR ADOBE HACKATHON PROJECT
-# Multi-stage build for production deployment
-
 # ===========================
 # Stage 1: Build Dependencies
 # ===========================
