@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  adobe-combined:
+    build: .
+    container_name: adobe-combined-solution
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+      - ./cache:/app/cache
+    environment:
+      - MODE=both  # Options: 1a, 1b, both
+      - PERSONA=Assistant Professor
+      - JOB=Research paper analysis and teaching resource identification
+    platform: linux/amd64
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 16G

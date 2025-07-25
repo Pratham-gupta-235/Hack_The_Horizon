@@ -1,0 +1,10 @@
+{
+  "max_chunk_size": 1000,
+  "chunk_overlap": 200,
+  "min_relevance_score": 0.1,
+  "top_k_sections": 10,
+  "embedding_model": "tfidf",
+  "cache_enabled": true,
+  "cache_dir": "cache",
+  "max_workers": 4
+}

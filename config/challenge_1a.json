@@ -1,0 +1,15 @@
+{
+  "min_heading_length": 5,
+  "max_heading_length": 200,
+  "min_font_size": 10,
+  "exclusion_ratio_threshold": 0.3,
+  "confidence_threshold": 0.7,
+  "max_outline_depth": 6,
+  "font_size_h1_threshold": 18,
+  "font_size_h2_threshold": 16,
+  "font_size_h3_threshold": 14,
+  "max_workers": 6,
+  "cache_enabled": true,
+  "cache_dir": "cache",
+  "batch_size_multiplier": 2
+}
