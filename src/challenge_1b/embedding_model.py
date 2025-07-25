@@ -6,6 +6,23 @@ from functools import lru_cache
 from ..shared.config import OptimizedConfig  
 
 
+@jit(nopython=True)
+def _fast_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """
+    Compute cosine similarity between two vectors using JIT for speed.
+    """
+    dot = 0.0
+    norm_a = 0.0
+    norm_b = 0.0
+    for i in prange(a.shape[0]):
+        dot += a[i] * b[i]
+        norm_a += a[i] ** 2
+        norm_b += b[i] ** 2
+    if norm_a > 0 and norm_b > 0:
+        return dot / (np.sqrt(norm_a) * np.sqrt(norm_b))
+    return 0.0
+
+
 class EmbeddingModel:
     """
     Optimized TF-IDF processor with performance enhancements.
@@ -33,22 +50,6 @@ class EmbeddingModel:
             smooth_idf=True,
             sublinear_tf=True
         )
-
-    @jit(nopython=True)
-    def _fast_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
-        """
-        Compute cosine similarity between two vectors using JIT for speed.
-        """
-        dot = 0.0
-        norm_a = 0.0
-        norm_b = 0.0
-        for i in prange(a.shape[0]):
-            dot += a[i] * b[i]
-            norm_a += a[i] ** 2
-            norm_b += b[i] ** 2
-        if norm_a > 0 and norm_b > 0:
-            return dot / (np.sqrt(norm_a) * np.sqrt(norm_b))
-        return 0.0
 
     @lru_cache(maxsize=128)
     def _cached_feature_names(self) -> Tuple[str, ...]:
@@ -111,7 +112,7 @@ class EmbeddingModel:
             for j in range(n):
                 if i == j:
                     continue
-                sims[ids[j]] = float(self._fast_similarity(row, tfidf_matrix[j]))
+                sims[ids[j]] = float(_fast_similarity(row, tfidf_matrix[j]))
             # Keep top-n if desired, or return full dict
             results.append({"id": ids[i], "similarities": sims})
         return results

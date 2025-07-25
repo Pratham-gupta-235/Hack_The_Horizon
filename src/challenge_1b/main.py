@@ -146,9 +146,30 @@ class PersonaDrivenProcessor:
                 doc_texts, doc_ids, persona_query
             )
             
+            # Transform scored documents to include document data
+            enriched_sections = []
+            for scored_doc in all_scored_sections:
+                doc_id = scored_doc['id']
+                score = scored_doc['score']
+                
+                # Find the corresponding document
+                doc_index = doc_ids.index(doc_id)
+                original_doc = all_processed_docs[doc_index]
+                
+                # Create enriched section data
+                enriched_section = {
+                    'document': doc_id,
+                    'relevance_score': score,
+                    'text': doc_texts[doc_index][:1000],  # First 1000 chars as preview
+                    'page': 1,  # Default page
+                    'section_title': f"Document: {doc_id}",
+                    'filename': doc_id
+                }
+                enriched_sections.append(enriched_section)
+            
             # Create consolidated output
             consolidated_output = self.output_formatter.format_consolidated_output(
-                all_scored_sections, successful_files, self.persona, self.job, datetime.now()
+                enriched_sections, successful_files, self.persona, self.job, datetime.now()
             )
             
             # Save consolidated output
